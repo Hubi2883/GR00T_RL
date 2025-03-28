@@ -15,6 +15,11 @@
 
 """
 This script is a replication of the notebook `getting_started/load_dataset.ipynb`
+Adapted for a 2-wheel differential-drive robot:
+- Observation: absolute acceleration (1 value)
+- Action: wheel commands (2 values)
+- Video: single camera feed
+- Annotation: natural language prompt (if provided)
 """
 
 import argparse
@@ -33,18 +38,21 @@ from gr00t.data.dataset import (
 from gr00t.data.embodiment_tags import EmbodimentTag
 from gr00t.utils.misc import any_describe
 
+import os
+
+# CHANGED: Update the DATA_PATH to point to our 2-wheel robot simulated dataset.
+DATA_PATH = os.path.expanduser("/ceph/home/student.aau.dk/wb68dm/Isaac-GR00T/demo_data/2wheel_robot_sim")
 
 def get_modality_keys(dataset_path: pathlib.Path) -> dict[str, list[str]]:
     """
     Get the modality keys from the dataset path.
-    Returns a dictionary with modality types as keys and their corresponding modality keys as values,
-    maintaining the order: video, state, action, annotation
+    Returns a dictionary with modality types as keys and their corresponding modality keys as values.
+    This function is kept for debugging purposes but we override the modality configs for our 2-wheel robot.
     """
     modality_path = dataset_path / LE_ROBOT_MODALITY_FILENAME
     with open(modality_path, "r") as f:
         modality_meta = json.load(f)
 
-    # Initialize dictionary with ordered keys
     modality_dict = {}
     for key in modality_meta.keys():
         modality_dict[key] = []
@@ -52,61 +60,61 @@ def get_modality_keys(dataset_path: pathlib.Path) -> dict[str, list[str]]:
             modality_dict[key].append(f"{key}.{modality}")
     return modality_dict
 
-
 def load_dataset(dataset_path: str, embodiment_tag: str, video_backend: str = "decord"):
-    # 1. get modality keys
+    # 1. Optionally, get modality keys from the dataset (for debugging)
     dataset_path = pathlib.Path(dataset_path)
     modality_keys_dict = get_modality_keys(dataset_path)
-    video_modality_keys = modality_keys_dict["video"]
-    language_modality_keys = modality_keys_dict["annotation"]
-    state_modality_keys = modality_keys_dict["state"]
-    action_modality_keys = modality_keys_dict["action"]
-
-    pprint(f"Valid modality_keys for debugging:: {modality_keys_dict} \n")
-
-    print(f"state_modality_keys: {state_modality_keys}")
-    print(f"action_modality_keys: {action_modality_keys}")
-
-    # 2. modality configs
+    print("Original modality keys from dataset (for debugging):")
+    pprint(modality_keys_dict)
+    
+    # CHANGED: Override modality configurations for our 2-wheel robot.
+    # Our 2-wheel robot dataset uses:
+    #   - State: "state.acceleration" (1 value)
+    #   - Action: "action.wheel_commands" (2 values)
+    #   - Video: "video.camera" (single camera feed)
+    #   - Annotation: "annotation.human.action.prompt" (for natural language instructions)
     modality_configs = {
         "video": ModalityConfig(
             delta_indices=[0],
-            modality_keys=video_modality_keys,  # we will include all video modalities
+            modality_keys=["video.camera"],  # CHANGED: Use our camera modality key
         ),
         "state": ModalityConfig(
             delta_indices=[0],
-            modality_keys=state_modality_keys,
+            modality_keys=["state.acceleration"],  # CHANGED: Only the acceleration reading
         ),
         "action": ModalityConfig(
             delta_indices=[0],
-            modality_keys=action_modality_keys,
+            modality_keys=["action.wheel_commands"],  # CHANGED: Two wheel commands for left and right wheels
         ),
     }
 
     # 3. language modality config (if exists)
-    if language_modality_keys:
-        modality_configs["language"] = ModalityConfig(
-            delta_indices=[0],
-            modality_keys=language_modality_keys,
-        )
+    # CHANGED: Use a new key "annotation.human.action.prompt" for natural language prompts.
+    modality_configs["language"] = ModalityConfig(
+        delta_indices=[0],
+        modality_keys=["annotation.human.action.prompt"],
+    )
 
-    # 4. gr00t embodiment tag
+    # 4. Set gr00t embodiment tag. 
+    # CHANGED: Here we assume we use the same tag as before; if a custom tag exists for differential drive,
+    # you could specify that here. For now, we keep GR1.
     embodiment_tag: EmbodimentTag = EmbodimentTag(embodiment_tag)
+    embodiment_tag = EmbodimentTag.GR1  # CHANGED: For our 2-wheel robot, we choose GR1 (or adjust as needed)
 
-    # 5. load dataset
+    # 5. Load the dataset using our custom modality configs.
     dataset = LeRobotSingleDataset(
-        dataset_path,
-        modality_configs,
+        dataset_path=dataset_path,  # CHANGED: Use our DATA_PATH
+        modality_configs=modality_configs,
         embodiment_tag=embodiment_tag,
         video_backend=video_backend,
     )
 
     print("\n" * 2)
     print("=" * 100)
-    print(f"{' Humanoid Dataset ':=^100}")
+    print(f"{' 2-Wheel Robot Dataset ':=^100}")
     print("=" * 100)
 
-    # print the 7th data point
+    # Print the 7th data point
     resp = dataset[7]
     any_describe(resp)
     print(resp.keys())
@@ -118,13 +126,13 @@ def load_dataset(dataset_path: str, embodiment_tag: str, video_backend: str = "d
         else:
             print(f"{key}: {value}")
 
-    # 6. plot the first 100 images
+    # 6. Plot the first 100 images (sample every 10th image)
     images_list = []
-    video_key = video_modality_keys[0]  # we will use the first video modality
-
+    video_key = modality_configs["video"].modality_keys[0]  # Use the video modality key ("video.camera")
     for i in range(100):
         if i % 10 == 0:
             resp = dataset[i]
+            # CHANGED: Access the first frame of the video sequence
             img = resp[video_key][0]
             images_list.append(img)
 
@@ -133,30 +141,29 @@ def load_dataset(dataset_path: str, embodiment_tag: str, video_backend: str = "d
         ax.imshow(images_list[i])
         ax.axis("off")
         ax.set_title(f"Image {i}")
-    plt.tight_layout()  # adjust the subplots to fit into the figure area.
+    plt.tight_layout()  # adjust subplots to fit the figure area.
     plt.show()
 
-
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Load Robot Dataset")
+    parser = argparse.ArgumentParser(description="Load 2-Wheel Robot Dataset in LeRobot Format")
     parser.add_argument(
         "--data_path",
         type=str,
-        default="demo_data/robot_sim.PickNPlace",
-        help="Path to the dataset",
+        default="demo_data/2wheel_robot_sim",  # CHANGED: Default dataset path for 2-wheel robot simulation
+        help="Path to the 2-wheel robot dataset",
     )
     parser.add_argument(
         "--embodiment_tag",
         type=str,
         default="gr1",
-        help="Full list of embodiment tags can be found in gr00t.data.schema.EmbodimentTag",
+        help="Embodiment tag (see gr00t.data.embodiment_tags.EmbodimentTag for a full list)",
     )
     parser.add_argument(
         "--video_backend",
         type=str,
         default="decord",
         choices=["decord", "torchvision_av"],
-        help="Backend to use for video loading, use torchvision_av for av encoded videos",
+        help="Backend to use for video loading, use torchvision_av for AV encoded videos",
     )
     args = parser.parse_args()
     load_dataset(args.data_path, args.embodiment_tag, args.video_backend)

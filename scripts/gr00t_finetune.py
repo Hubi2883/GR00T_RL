@@ -13,255 +13,174 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-import subprocess
-import sys
-from dataclasses import dataclass
-from pathlib import Path
+"""
+Unified Finetuning Script for GR00T-N1 on a New Embodiment (So100)
+This script follows these steps:
+    Step 1.1: Define modality configs and transforms for the dataset.
+    Step 1.2: Load the dataset using LeRobotSingleDataset.
+    Step 2.1: Load the base GR00T-N1 model for tuning.
+    Step 2.2: Prepare training arguments and run the training loop.
+"""
 
+import argparse
+import os
+import pathlib
+from pprint import pprint
+
+import matplotlib.pyplot as plt
+import numpy as np
 import torch
-import tyro
+
+# --------------------------
+# STEP 1.1: Modality Configs and Transforms
+# --------------------------
+from gr00t.data.dataset import LeRobotSingleDataset, ModalityConfig
+from gr00t.data.transform.base import ComposedModalityTransform
+from gr00t.data.transform import (
+    VideoToTensor,
+    VideoCrop,
+    VideoResize,
+    VideoColorJitter,
+    VideoToNumpy,
+)
+from gr00t.data.transform.state_action import StateActionToTensor, StateActionTransform
+from gr00t.data.transform.concat import ConcatTransform
+from gr00t.model.transforms import GR00TTransform
+from gr00t.experiment.data_config import DATA_CONFIG_MAP
+
+# CHANGED: Use the "so100" data configuration for the low-cost So100 Lerobot arm dataset.
+dataset_path = "./demo_data/so100_strawberry_grape"  # Change as needed !!!!
+data_config = DATA_CONFIG_MAP["so100"]
+modality_configs = data_config.modality_config()
+# Optionally, load transforms from the data_config; here we compose our own:
+to_apply_transforms = ComposedModalityTransform(
+    transforms=[
+        # Video transforms
+        VideoToTensor(apply_to=modality_configs["video"].modality_keys, backend="torchvision"),
+        VideoCrop(apply_to=modality_configs["video"].modality_keys, scale=0.95, backend="torchvision"),
+        VideoResize(apply_to=modality_configs["video"].modality_keys, height=224, width=224, interpolation="linear", backend="torchvision"),
+        VideoColorJitter(apply_to=modality_configs["video"].modality_keys, brightness=0.3, contrast=0.4, saturation=0.5, hue=0.08, backend="torchvision"),
+        VideoToNumpy(apply_to=modality_configs["video"].modality_keys),
+        # State transforms
+        StateActionToTensor(apply_to=modality_configs["state"].modality_keys),
+        StateActionTransform(apply_to=modality_configs["state"].modality_keys,
+                               normalization_modes={key: "min_max" for key in modality_configs["state"].modality_keys}),
+        # Action transforms
+        StateActionToTensor(apply_to=modality_configs["action"].modality_keys),
+        StateActionTransform(apply_to=modality_configs["action"].modality_keys,
+                               normalization_modes={key: "min_max" for key in modality_configs["action"].modality_keys}),
+        # Concat transform: concatenates the modalities in a specified order.
+        ConcatTransform(
+            video_concat_order=modality_configs["video"].modality_keys,
+            state_concat_order=modality_configs["state"].modality_keys,
+            action_concat_order=modality_configs["action"].modality_keys,
+        ),
+        # Model-specific transform for GR00T
+        GR00TTransform(
+            state_horizon=len(data_config.modality_config()["state"].delta_indices),
+            action_horizon=len(data_config.modality_config()["action"].delta_indices),
+            max_state_dim=64,
+            max_action_dim=32,
+        ),
+    ]
+)
+
+# --------------------------
+# STEP 1.2: Load the Dataset
+# --------------------------
+print("Loading dataset from:", dataset_path)
+# We load the dataset without transforms first for visualization
+train_dataset = LeRobotSingleDataset(
+    dataset_path=dataset_path,
+    modality_configs=modality_configs,
+    embodiment_tag="new_embodiment",  # CHANGED: Using new embodiment tag for So100
+    video_backend="torchvision_av",
+)
+
+# Visualize a few images from the dataset.
+print("Dataset keys:", train_dataset[0].keys())
+images_list = []
+video_key = list(modality_configs["video"].modality_keys)[0]  # Assume one video modality
+for i in range(5):
+    sample = train_dataset[i]
+    img = sample[video_key][0]
+    images_list.append(img)
+
+fig, axs = plt.subplots(1, 5, figsize=(20, 5))
+for i, ax in enumerate(axs.flat):
+    ax.imshow(images_list[i])
+    ax.axis("off")
+    ax.set_title(f"Image {i}")
+plt.show()
+
+# --------------------------
+# STEP 2.1: Load the Base Model
+# --------------------------
+from gr00t.model.gr00t_n1 import GR00T_N1
+
+BASE_MODEL_PATH = "nvidia/GR00T-N1-2B"  # Pretrained base model
+# CHANGED: Specify which parts of the model to tune
+TUNE_LLM = False            # Do not tune the language model component
+TUNE_VISUAL = True          # Tune the visual encoder
+TUNE_PROJECTOR = True       # Tune the action head's projector
+TUNE_DIFFUSION_MODEL = True # Tune the diffusion model
+
+# Load the base model for finetuning
+model = GR00T_N1.from_pretrained(
+    pretrained_model_name_or_path=BASE_MODEL_PATH,
+    tune_llm=TUNE_LLM,
+    tune_visual=TUNE_VISUAL,
+    tune_projector=TUNE_PROJECTOR,
+    tune_diffusion_model=TUNE_DIFFUSION_MODEL,
+)
+# Set the model to use bfloat16 for computation (if desired)
+model.compute_dtype = "bfloat16"
+model.config.compute_dtype = "bfloat16"
+device = "cuda" if torch.cuda.is_available() else "cpu"
+model.to(device)
+
+# --------------------------
+# STEP 2.2: Prepare Training Arguments
+# --------------------------
 from transformers import TrainingArguments
 
-from gr00t.data.dataset import LeRobotSingleDataset
-from gr00t.data.schema import EmbodimentTag
-from gr00t.experiment.data_config import DATA_CONFIG_MAP
+# CHANGED: Adjust hyperparameters as necessary.
+output_dir = os.path.expanduser("~/so100-checkpoints")
+training_args = TrainingArguments(
+    output_dir=output_dir,
+    per_device_train_batch_size=8,
+    max_steps=2000,  # Adjust as needed
+    learning_rate=1e-4,
+    weight_decay=1e-5,
+    warmup_ratio=0.05,
+    lr_scheduler_type="cosine",
+    logging_steps=10,
+    save_steps=500,
+    evaluation_strategy="no",
+    seed=42,
+    do_eval=False,
+    dataloader_num_workers=8,
+)
+
+# --------------------------
+# STEP 2.3: Run the Finetuning Training Loop
+# --------------------------
 from gr00t.experiment.runner import TrainRunner
-from gr00t.model.gr00t_n1 import GR00T_N1
-from gr00t.utils.peft import get_lora_model
 
+# Reload the training dataset with transforms applied.
+train_dataset = LeRobotSingleDataset(
+    dataset_path=dataset_path,
+    modality_configs=modality_configs,
+    embodiment_tag="new_embodiment",
+    video_backend="torchvision_av",
+    transforms=to_apply_transforms,
+)
 
-@dataclass
-class Config:
-    """Configuration for GR00T model fine-tuning."""
-
-    # Dataset parameters
-    dataset_path: str
-    """Path to the dataset directory."""
-
-    output_dir: str = "/tmp/gr00t"
-    """Directory to save model checkpoints."""
-
-    data_config: str = "gr1_arms_only"
-    """Data configuration name from DATA_CONFIG_MAP."""
-
-    # Training parameters
-    batch_size: int = 16
-    """Batch size per GPU for training."""
-
-    max_steps: int = 10000
-    """Maximum number of training steps."""
-
-    num_gpus: int = 1
-    """Number of GPUs to use for training."""
-
-    save_steps: int = 500
-    """Number of steps between saving checkpoints."""
-
-    # Model parameters
-    base_model_path: str = "nvidia/GR00T-N1-2B"
-    """Path or HuggingFace model ID for the base model."""
-
-    tune_llm: bool = False
-    """Whether to fine-tune the language model backbone."""
-
-    tune_visual: bool = True
-    """Whether to fine-tune the vision tower."""
-
-    tune_projector: bool = True
-    """Whether to fine-tune the projector."""
-
-    tune_diffusion_model: bool = True
-    """Whether to fine-tune the diffusion model."""
-
-    resume: bool = False
-    """Whether to resume from a checkpoint."""
-
-    # Advanced training parameters
-    learning_rate: float = 1e-4
-    """Learning rate for training."""
-
-    weight_decay: float = 1e-5
-    """Weight decay for AdamW optimizer."""
-
-    warmup_ratio: float = 0.05
-    """Ratio of total training steps used for warmup."""
-
-    lora_rank: int = 0
-    """Rank for the LORA model."""
-
-    lora_alpha: int = 16
-    """Alpha value for the LORA model."""
-
-    lora_dropout: float = 0.1
-    """Dropout rate for the LORA model."""
-
-    dataloader_num_workers: int = 8
-    """Number of workers for data loading."""
-
-    report_to: str = "wandb"
-    """Where to report training metrics (e.g., 'wandb', 'tensorboard')."""
-
-    # Data loading parameters
-    embodiment_tag: str = "new_embodiment"
-    """Embodiment tag to use for training. e.g. 'new_embodiment', 'gr1'"""
-
-    video_backend: str = "decord"
-    """Video backend to use for training. [decord, torchvision_av]"""
-
-
-#####################################################################################
-# main training function
-#####################################################################################
-
-
-def main(config: Config):
-    """Main training function."""
-    # ------------ step 1: load dataset ------------
-    embodiment_tag = EmbodimentTag(config.embodiment_tag)
-
-    # 1.1 modality configs and transforms
-    data_config_cls = DATA_CONFIG_MAP[config.data_config]
-    modality_configs = data_config_cls.modality_config()
-    transforms = data_config_cls.transform()
-
-    # 1.2 data loader
-    train_dataset = LeRobotSingleDataset(
-        dataset_path=config.dataset_path,
-        modality_configs=modality_configs,
-        transforms=transforms,
-        embodiment_tag=embodiment_tag,  # This will override the dataset's embodiment tag to "new_embodiment"
-        video_backend=config.video_backend,
-    )
-
-    # ------------ step 2: load model ------------
-    model = GR00T_N1.from_pretrained(
-        pretrained_model_name_or_path=config.base_model_path,
-        tune_llm=config.tune_llm,  # backbone's LLM
-        tune_visual=config.tune_visual,  # backbone's vision tower
-        tune_projector=config.tune_projector,  # action head's projector
-        tune_diffusion_model=config.tune_diffusion_model,  # action head's DiT
-    )
-
-    # Set the model's compute_dtype to bfloat16
-    model.compute_dtype = "bfloat16"
-    model.config.compute_dtype = "bfloat16"
-
-    if config.lora_rank > 0:
-        model = get_lora_model(
-            model,
-            rank=config.lora_rank,
-            lora_alpha=config.lora_alpha,
-            lora_dropout=config.lora_dropout,
-        )
-
-    # 2.1 modify training args
-    training_args = TrainingArguments(
-        output_dir=config.output_dir,
-        run_name=None,
-        remove_unused_columns=False,
-        deepspeed="",
-        gradient_checkpointing=False,
-        bf16=True,
-        tf32=True,
-        per_device_train_batch_size=config.batch_size,
-        gradient_accumulation_steps=1,
-        dataloader_num_workers=config.dataloader_num_workers,
-        dataloader_pin_memory=False,
-        dataloader_persistent_workers=True,
-        optim="adamw_torch",
-        adam_beta1=0.95,
-        adam_beta2=0.999,
-        adam_epsilon=1e-8,
-        learning_rate=config.learning_rate,
-        weight_decay=config.weight_decay,
-        warmup_ratio=config.warmup_ratio,
-        lr_scheduler_type="cosine",
-        logging_steps=10.0,
-        num_train_epochs=300,
-        max_steps=config.max_steps,
-        save_strategy="steps",
-        save_steps=config.save_steps,
-        evaluation_strategy="no",
-        save_total_limit=8,
-        report_to=config.report_to,
-        seed=42,
-        do_eval=False,
-        ddp_find_unused_parameters=False,
-        ddp_bucket_cap_mb=100,
-        torch_compile_mode=None,
-    )
-
-    # 2.2 run experiment
-    experiment = TrainRunner(
-        train_dataset=train_dataset,
-        model=model,
-        training_args=training_args,
-        resume_from_checkpoint=config.resume,
-    )
-
-    # 2.3 run experiment
-    experiment.train()
-
-
-if __name__ == "__main__":
-    # Parse arguments using tyro
-    config = tyro.cli(Config)
-
-    # Print the tyro config
-    print("\n" + "=" * 50)
-    print("GR00T FINE-TUNING CONFIGURATION:")
-    print("=" * 50)
-    for key, value in vars(config).items():
-        print(f"{key}: {value}")
-    print("=" * 50 + "\n")
-
-    available_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 1
-
-    # Validate GPU configuration
-    assert (
-        config.num_gpus <= available_gpus
-    ), f"Number of GPUs requested ({config.num_gpus}) is greater than the available GPUs ({available_gpus})"
-    assert config.num_gpus > 0, "Number of GPUs must be greater than 0"
-    print(f"Using {config.num_gpus} GPUs")
-
-    if config.num_gpus == 1:
-        # Single GPU mode - set CUDA_VISIBLE_DEVICES=0
-        os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-        # Run the script normally
-        main(config)
-    else:
-        if os.environ.get("IS_TORCHRUN", "0") == "1":
-            main(config)
-        else:
-            # Multi-GPU mode - use torchrun
-            script_path = Path(__file__).absolute()
-            # Remove any existing CUDA_VISIBLE_DEVICES from environment
-            if "CUDA_VISIBLE_DEVICES" in os.environ:
-                del os.environ["CUDA_VISIBLE_DEVICES"]
-
-            # Use subprocess.run instead of os.system
-            cmd = [
-                "torchrun",
-                "--standalone",
-                f"--nproc_per_node={config.num_gpus}",
-                "--nnodes=1",  # default to 1 node for now
-                str(script_path),
-            ]
-
-            # Convert config to command line arguments
-            for key, value in vars(config).items():
-                if isinstance(value, bool):
-                    # For boolean values, use --flag or --no-flag format
-                    if value:
-                        cmd.append(f"--{key.replace('_', '-')}")
-                    else:
-                        cmd.append(f"--no-{key.replace('_', '-')}")
-                else:
-                    # For non-boolean values, use --key value format
-                    cmd.append(f"--{key.replace('_', '-')}")
-                    cmd.append(str(value))
-            print("Running torchrun command: ", cmd)
-            env = os.environ.copy()
-            env["IS_TORCHRUN"] = "1"
-            sys.exit(subprocess.run(cmd, env=env).returncode)
+# Initialize the training runner and start training
+experiment = TrainRunner(
+    train_dataset=train_dataset,
+    model=model,
+    training_args=training_args,
+)
+print("Starting finetuning training...")
+experiment.train()
