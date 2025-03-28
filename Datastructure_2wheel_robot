@@ -1,0 +1,91 @@
+Folder Structure
+
+.
+├─ meta
+│   ├─ episodes.jsonl
+│   ├─ modality.json       # -> GR00T LeRobot specific
+│   ├─ info.json
+│   └─ tasks.jsonl
+├─ videos
+│   └─ chunk-000
+│       └─ observation.images.ego_view
+│           ├─ episode_000000.mp4
+│           └─ episode_000001.mp4
+└─ data
+    └─ chunk-000
+        ├─ episode_000000.parquet
+        └─ episode_000001.parquet
+
+
+Parquet File (First parquet): 
+
+{
+    "observation.state": [1.23],
+    "action": [0.5, -0.5],
+    "timestamp": 0.05,
+    "annotation.human.action.prompt": 0,
+    "task_index": 0,
+    "episode_index": 0,
+    "index": 0,
+    "next.reward": 0,
+    "next.done": false
+}
+
+
+meta/tasks.jsonl
+
+{"task_index": 0, "task": "drive forward at constant speed"}
+{"task_index": 1, "task": "turn left and accelerate"}
+
+
+meta/episodes.jsonl
+
+{"episode_index": 0, "tasks": [0], "length": 200}
+{"episode_index": 1, "tasks": [1], "length": 180}
+
+meta/modality.json
+
+{
+    "state": {
+        "acceleration": {
+            "start": 0,
+            "end": 1,
+            "dtype": "float32",
+            "range": [0.0, 20.0]
+        }
+    },
+    "action": {
+        "wheel_commands": {
+            "start": 0,
+            "end": 2,
+            "absolute": true,
+            "dtype": "float32",
+            "range": [-5.0, 5.0]
+        }
+    },
+    "video": {
+        "camera": {
+            "original_key": "observation.images.camera"
+        }
+    },
+    "annotation": {
+        "human.action.prompt": {}
+    }
+}
+
+meta/info.json
+  
+{
+    "dataset_name": "2WheelRobotSim",
+    "version": "2.0",
+    "description": "A simulated dataset for a 2-wheel differential drive robot with absolute acceleration observations, wheel commands, and a camera feed.",
+    "author": "Your Name",
+    "creation_date": "2025-03-27"
+}
+
+MP4 video files (e.g. from a single front-facing camera) stored under videos/chunk-000/observation.images.camera/
+
+Parquet files with a 1D state array (acceleration), a 2D action array (wheel commands), and associated annotations
+
+Meta files (tasks.jsonl, episodes.jsonl, modality.json, and info.json) that define the dataset’s structure and metadata
+
