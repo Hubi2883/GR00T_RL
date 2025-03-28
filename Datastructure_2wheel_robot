@@ -38,10 +38,26 @@ meta/tasks.jsonl
 {"task_index": 1, "task": "turn left and accelerate"}
 
 
+
+
+
 meta/episodes.jsonl
+
+An episode is a single, continuous sequence of data captured during one run of the robot performing a task. 
+In the LeRobot dataset, an episode represents a complete demonstration—from the starting state until the robot completes the task (or the episode ends). 
+Each episode contains a series of observations (like sensor data and video frames), corresponding actions (motor commands), timestamps, and annotations. 
+Essentially, an episode is a self-contained record of a robot's interaction with its environment that you can use for training or evaluating models.
+
+episode_index: A unique identifier for the episode.
+tasks: A list of task indices (referencing the tasks defined in meta/tasks.jsonl) that are performed during the episode.
+length: The number of observations (or frames) contained in that episode.
 
 {"episode_index": 0, "tasks": [0], "length": 200}
 {"episode_index": 1, "tasks": [1], "length": 180}
+
+
+
+
 
 meta/modality.json
 
