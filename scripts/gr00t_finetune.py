@@ -50,7 +50,7 @@ from gr00t.experiment.data_config import DATA_CONFIG_MAP
 
 # CHANGED: Use the "so100" data configuration for the low-cost So100 Lerobot arm dataset.
 dataset_path = "./demo_data/so100_strawberry_grape"  # Change as needed !!!!
-data_config = DATA_CONFIG_MAP["so100"]
+data_config = DATA_CONFIG_MAP["two_wheel"]
 modality_configs = data_config.modality_config()
 # Optionally, load transforms from the data_config; here we compose our own:
 to_apply_transforms = ComposedModalityTransform(
