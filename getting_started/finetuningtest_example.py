@@ -197,23 +197,27 @@ model = GR00T_N1.from_pretrained(
 model = model.to(device)
 
 # === Patch 4: Fix for DataParallel output format ===
-original_forward_class = GR00T_N1.forward  # Get class method instead of instance method
+original_forward_class = GR00T_N1.forward
 
 def wrapped_forward(self, inputs):
-    # Call the original forward method from the class definition
+    # Call the original forward method
     outputs = original_forward_class(self, inputs)
     
-    # Process outputs to ensure we have a dictionary with the expected keys
-    if isinstance(outputs, dict) and "loss" in outputs:
-        # Already has loss key, just return a simplified version
+    # BatchFeature handling - most common case
+    if hasattr(outputs, "keys") and "loss" in outputs.keys():
+        loss = outputs["loss"]
+        # Return just a simple dictionary with the loss to avoid DataParallel issues
+        return {"loss": loss}
+    
+    # Fallback cases
+    elif isinstance(outputs, dict) and "loss" in outputs:
         return {"loss": outputs["loss"]}
     elif isinstance(outputs, torch.Tensor):
-        # Wrap tensor in a dictionary with loss key
         return {"loss": outputs}
     
-    # If we can't find a loss tensor, create a dummy one
-    print("WARNING: Could not find a proper loss tensor in outputs, using dummy loss")
-    return {"loss": torch.tensor(0.0, device=self.device, requires_grad=True)}
+    # If we can't find a loss, create a dummy (shouldn't happen anymore)
+    print("WARNING: Could not find a proper loss tensor in outputs")
+    return {"loss": torch.tensor(1.0, device=self.device, requires_grad=True)}
 
 # Apply the patch
 model.forward = types.MethodType(wrapped_forward, model)
@@ -226,9 +230,9 @@ training_args = TrainingArguments(
     gradient_checkpointing=False,
     bf16=True,
     tf32=True,
-    per_device_train_batch_size=8,
+    per_device_train_batch_size=4,
     gradient_accumulation_steps=1,
-    dataloader_num_workers=4,
+    dataloader_num_workers=2,
     dataloader_pin_memory=False,
     dataloader_persistent_workers=True,
     optim="adamw_torch",
