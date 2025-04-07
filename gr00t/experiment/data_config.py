@@ -685,15 +685,17 @@ class Gr1ArmsWaistDataConfig(Gr1ArmsOnlyDataConfig):
         return super().transform()
 
 
+
+
+
 class TwoWheelDataConfig(BaseDataConfig):
     video_keys = ["video.ego_view"]
     state_keys = [
-        "state.acceleration",
-    ]
+        "state.acceleration",]
     action_keys = [
         "action.wheel_commands",
     ]
-    language_keys = ["annotation.human.action.task_description", "annotation.human.validity"]
+    language_keys = ["annotation.human.action.task_description"]
     observation_indices = [0]
     action_indices = list(range(16))
 
@@ -760,6 +762,9 @@ class TwoWheelDataConfig(BaseDataConfig):
 
 
 
+
+
+
 class TwoWheelRobotFromLegsDataConfig(BaseDataConfig):
     # We re-use keys from the checkpoint metadata to represent left and right wheels.
     # Here we map "left_leg" to the left wheel and "right_leg" to the right wheel.
@@ -802,31 +807,30 @@ class TwoWheelRobotFromLegsDataConfig(BaseDataConfig):
 
     def transform(self) -> ModalityTransform:
         transforms = [
-            # Video transforms
-            VideoToTensor(apply_to=self.video_keys),
-            VideoCrop(apply_to=self.video_keys, scale=0.95),
-            VideoResize(apply_to=self.video_keys, height=224, width=224, interpolation="linear"),
-            VideoColorJitter(apply_to=self.video_keys, brightness=0.3, contrast=0.4, saturation=0.5, hue=0.08),
-            VideoToNumpy(apply_to=self.video_keys),
+            # Custom lambda transform to crop and resize the raw video numpy array.
+            # Then convert the resized video to tensor.
+            VideoToTensor(apply_to=self.video_keys, backend="torchvision"),
+            # Apply color jitter (this works on tensor data).
+            VideoColorJitter(apply_to=self.video_keys, brightness=0.3, contrast=0.4, saturation=0.5, hue=0.08, backend="torchvision"),
             # State transforms
             StateActionToTensor(apply_to=self.state_keys),
             StateActionTransform(
                 apply_to=self.state_keys,
-                normalization_modes={key: "min_max" for key in self.state_keys}
+                normalization_modes={key: "min_max" for key in self.state_keys},
             ),
             # Action transforms
             StateActionToTensor(apply_to=self.action_keys),
             StateActionTransform(
                 apply_to=self.action_keys,
-                normalization_modes={key: "min_max" for key in self.action_keys}
+                normalization_modes={key: "min_max" for key in self.action_keys},
             ),
-            # Concatenation transform (if the model expects concatenated inputs)
+            # Concat transform: combine modalities into single arrays.
             ConcatTransform(
                 video_concat_order=self.video_keys,
                 state_concat_order=self.state_keys,
                 action_concat_order=self.action_keys,
             ),
-            # Model-specific transform: sets up horizon parameters, etc.
+            # GR00T-specific transform: adjust horizons/dimensions.
             GR00TTransform(
                 state_horizon=len(self.observation_indices),
                 action_horizon=len(self.action_indices),
@@ -835,7 +839,6 @@ class TwoWheelRobotFromLegsDataConfig(BaseDataConfig):
             ),
         ]
         return ComposedModalityTransform(transforms=transforms)
-
 
 
 

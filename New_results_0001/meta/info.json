@@ -1,9 +1,9 @@
 {
     "codebase_version": "v2.0",
     "robot_type": "TwoWheelRobot",
-    "total_episodes": 50,
+    "total_episodes": 10,
     "total_frames": 2000,
-    "total_tasks": 5,
+    "total_tasks": 4,
     "total_videos": 50,
     "total_chunks": 1,
     "chunks_size": 1000,
@@ -18,8 +18,8 @@
         "observation.images.camera": {
             "dtype": "uint8",
             "shape": [
-                224,
-                224,
+                316,
+                564,
                 3
             ],
             "names": [
@@ -28,7 +28,7 @@
                 "channel"
             ],
             "video_info": {
-                "video.fps": 20.0,
+                "video.fps": 10.0,
                 "video.codec": "h264",
                 "video.pix_fmt": "yuv420p",
                 "video.is_depth_map": false,
