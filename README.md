@@ -1,4 +1,4 @@
-On-going project modifing GR00T_RL aiming to improve efficiency of finetuning by incorporating reinforcement feedback human learning (RLHF)
+On-going project modifing GR00T_RL aiming to improve efficiency of finetuning by incorporating reinforcement learning feedback human  (RLHF).
 
 
 
