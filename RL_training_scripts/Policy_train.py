@@ -15,19 +15,6 @@ from gr00t.model.transforms import GR00TTransform
 from gr00t.model.action_head.flow_matching_action_head import FlowmatchingActionHead
 from gr00t.model.action_head.cross_attention_dit import TimestepEncoder
 
-# === Patch 1: Fix for dtype issue ===
-original_dtype = FlowmatchingActionHead.dtype
-
-@property
-def safe_dtype(self):
-    try:
-        return original_dtype.fget(self)
-    except StopIteration:
-        return torch.bfloat16  # Use bfloat16 as fallback for Flash Attention
-    
-# Apply the patch
-FlowmatchingActionHead.dtype = safe_dtype
-
 # === Patch 2: Fix for Beta distribution sampling ===
 original_sample_time = FlowmatchingActionHead.sample_time
 
@@ -48,38 +35,6 @@ def patched_sample_time(self, batch_size, device, dtype):
 
 # Apply the patch
 FlowmatchingActionHead.sample_time = patched_sample_time
-
-# === Patch 3: Fix for TimestepEncoder ===
-original_timestep_encoder_forward = TimestepEncoder.forward
-
-def patched_timestep_encoder_forward(self, timestep):
-    try:
-        # Original implementation tries to get dtype from parameters
-        return original_timestep_encoder_forward(self, timestep)
-    except StopIteration:
-        # Fixed embedding dimension based on the model architecture
-        embed_dim = 1536  # This should match the expected embedding dimension
-        
-        # Convert timestep to float32 for calculation
-        timesteps = timestep.to(torch.float32)
-        
-        # Generate sinusoidal embeddings following standard practice
-        half_dim = embed_dim // 2
-        emb = torch.log(torch.tensor(10000.0)).to(device=timesteps.device) / (half_dim - 1)
-        emb = torch.exp(torch.arange(half_dim, device=timesteps.device) * -emb)
-        emb = timesteps[:, None] * emb[None, :]
-        emb = torch.cat([torch.sin(emb), torch.cos(emb)], dim=1)
-        
-        if embed_dim % 2 == 1:  # zero pad if needed
-            emb = torch.nn.functional.pad(emb, (0, 1, 0, 0))
-        
-        # Convert to bfloat16 for mixed precision training
-        emb = emb.to(torch.bfloat16)
-        
-        return emb
-
-# Apply the patch
-TimestepEncoder.forward = patched_timestep_encoder_forward
 
 # Set paths
 dataset_path = "/ceph/home/student.aau.dk/wb68dm/Isaac-GR00T_RL/New_results_0001"
@@ -194,7 +149,7 @@ model = GR00T_N1.from_pretrained(
 )
 
 # Move model to device
-model = model.to(device)
+
 
 # === Patch 4: Fix for DataParallel output format ===
 original_forward_class = GR00T_N1.forward
@@ -214,13 +169,12 @@ def wrapped_forward(self, inputs):
         return {"loss": outputs["loss"]}
     elif isinstance(outputs, torch.Tensor):
         return {"loss": outputs}
-    
-    # If we can't find a loss, create a dummy (shouldn't happen anymore)
-    print("WARNING: Could not find a proper loss tensor in outputs")
-    return {"loss": torch.tensor(1.0, device=self.device, requires_grad=True)}
-
 # Apply the patch
 model.forward = types.MethodType(wrapped_forward, model)
+
+model.compute_dtype = "bfloat16"
+model.config.compute_dtype = "bfloat16"
+model = model.to(device)
 
 # Setup training arguments
 training_args = TrainingArguments(

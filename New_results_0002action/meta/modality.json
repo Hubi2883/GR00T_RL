@@ -3,7 +3,7 @@
         "acceleration": {
             "start": 0,
             "end": 1,
-            "dtype": "float32"
+            "dtype": "float64"
         }
     },
     "action": {
@@ -11,7 +11,7 @@
             "start": 0,
             "end": 2,
             "absolute": true,   
-            "dtype": "float32"
+            "dtype": "float64"
         }
     },
     "video": {
@@ -22,5 +22,17 @@
     "annotation": {
         "human.action.task_description": {},
         "human.validity": {}
+    },
+    "next": {
+        "reward": {
+            "start": 0,
+            "end": 1,
+            "dtype": "float64"
+        },
+        "done": {
+            "start": 0,
+            "end": 1,
+            "dtype": "bool"
+        }
     }
 }

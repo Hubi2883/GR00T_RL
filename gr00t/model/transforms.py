@@ -268,6 +268,10 @@ class GR00TTransform(InvertibleModalityTransform):
         transformed_data["state"] = state
         transformed_data["state_mask"] = state_mask
 
+        # ADD THIS: Preserve target_reward if present - doesn't affect policy training
+        if "target_reward" in data:
+            transformed_data["target_reward"] = data["target_reward"]
+
         if self.training:
             # 3) Prepare actions
             transformed_data["segmentation_target"] = np.zeros((2,))
@@ -329,3 +333,4 @@ class GR00TTransform(InvertibleModalityTransform):
 
     def __call__(self, data: dict) -> dict:
         return self.apply(data)
+
