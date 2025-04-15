@@ -54,7 +54,7 @@ Here is a sample of the robot_sim.PickNPlace dataset that is present in the [dem
     "timestamp":0.04999995231628418, // timestamp of the observation
     "annotation.human.action.task_description":0, // index of the task description in the meta/tasks.jsonl file
     "task_index":0, // index of the task in the meta/tasks.jsonl file
-    "annotation.human.validity":1, // index of the task in the meta/tasks.jsonl file
+    "annotation.human.validity":1, // index of the feedback in the meta/rewards.jsonl file
     "episode_index":0, // index of the episode
     "index":0, // index of the observation. This is a global index across all observations in the dataset.
     "next.reward":0, // reward of the next observation

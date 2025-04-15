@@ -17,7 +17,7 @@ from gr00t.data.transform.transform_reward import RewardTransform
 from gr00t.model.transforms import GR00TTransform
 from gr00t.data.reward_dataset import RewardDataset
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"  # Only use the first GPU
+#os.environ["CUDA_VISIBLE_DEVICES"] = "0"  # Only use the first GPU
 # Set paths for reward model training 
 # Use a dataset with reward annotations - different from policy dataset
 dataset_path = "/ceph/home/student.aau.dk/wb68dm/Isaac-GR00T_RL/New_results_0002action"  
@@ -52,7 +52,7 @@ reward_modality = ModalityConfig(
 
 language_modality = ModalityConfig(
     delta_indices=[0],
-    modality_keys=["annotation.human.action.task_description"],
+    modality_keys=["annotation.human.validity"],
 )
 
 modality_configs = {
@@ -165,9 +165,6 @@ reward_model.set_trainable_parameters(
     tune_projector=True
 )
 
-# IMPORTANT: Convert to bfloat16 and move to device ONCE
-reward_model = reward_model.to(torch.bfloat16).to("cuda:0")
-
 # Fix prepare_input method
 def fixed_prepare_input(self, inputs):
     """Fixed prepare_input that handles dtype conversion properly"""
@@ -175,6 +172,7 @@ def fixed_prepare_input(self, inputs):
     reward_inputs = {}
     
     # Get compute dtype directly
+
     compute_dtype = torch.bfloat16  # Explicitly set to bfloat16
     device = next(self.parameters()).device
     
@@ -226,11 +224,20 @@ class RewardModelWrapper(torch.nn.Module):
                 return {"loss": outputs["loss"]}
             
             # If reward_pred is in outputs, calculate loss
-            elif "reward_pred" in outputs and "target_reward" in inputs:
-                reward_pred = outputs["reward_pred"]
-                target = inputs["target_reward"].to(device=reward_pred.device, dtype=reward_pred.dtype)
-                loss = F.mse_loss(reward_pred, target)
-                return {"loss": loss}
+# If reward_pred is in outputs, calculate loss
+        elif "reward_pred" in outputs and "target_reward" in inputs:
+            reward_pred = outputs["reward_pred"]
+            target = inputs["target_reward"]
+            
+            # Ensure target has matching shape without printing warnings
+            if target.shape != reward_pred.shape:
+                # Silently fix shape
+                while len(target.shape) > len(reward_pred.shape):
+                    target = target.squeeze(-1)
+                    
+            target = target.to(device=reward_pred.device, dtype=reward_pred.dtype)
+            loss = F.mse_loss(reward_pred, target)
+            return {"loss": loss}
         
         # If outputs is a tensor, assume it's the loss
         elif isinstance(outputs, torch.Tensor):
@@ -243,8 +250,9 @@ class RewardModelWrapper(torch.nn.Module):
         print(f"Inputs has target_reward: {'target_reward' in inputs}")
             
         # Return a dummy loss for debugging
-        return {"loss": torch.tensor(0.0, device="cuda:0", requires_grad=True)}
-    # Add this to your RewardModelWrapper class
+        device = next(self.parameters()).device  # Get actual device
+        return {"loss": torch.tensor(0.0, device=device, requires_grad=True)}
+    
     def save_pretrained(self, output_dir, state_dict=None):
         """Save the model to the specified output directory."""
         import os
@@ -267,9 +275,13 @@ class RewardModelWrapper(torch.nn.Module):
             if hasattr(self.model, 'config'):
                 self.model.config.save_pretrained(output_dir)
 
+
+reward_model = reward_model.to(torch.bfloat16)
+
+
 # Apply wrapper ONCE
 reward_model = RewardModelWrapper(reward_model)
-
+reward_model = reward_model.to("cuda")  # Important: move to GPU BEFORE DataParallel
 
 # Setup training arguments
 training_args = TrainingArguments(
