@@ -10,19 +10,17 @@ class RewardDataset(LeRobotSingleDataset):
         super().__init__(*args, **kwargs)
         # Load rewards file if it exists
         rewards_path = self.dataset_path / "meta/rewards.jsonl"
-        if rewards_path.exists():
-            with open(rewards_path, "r") as f:
-                rewards = [json.loads(line) for line in f]
-            self._rewards_df = pd.DataFrame(rewards)
-            if "annotation.human.validity" in self._rewards_df.columns:
-                self._rewards_df = self._rewards_df.set_index("annotation.human.validity")
-                print("Successfully loaded rewards file with annotation.human.validity as index")
-            else:
-                print("Warning: rewards file doesn't have 'annotation.human.validity' column")
-                self._rewards_df = None
+        if not rewards_path.exists():
+            raise FileNotFoundError(f"Rewards file is required but not found at {rewards_path}")
+            
+        with open(rewards_path, "r") as f:
+            rewards = [json.loads(line) for line in f]
+        self._rewards_df = pd.DataFrame(rewards)
+        if "annotation.human.validity" in self._rewards_df.columns:
+            self._rewards_df = self._rewards_df.set_index("annotation.human.validity")
+            print("Successfully loaded rewards file with annotation.human.validity as index")
         else:
-            print(f"Warning: rewards file not found at {rewards_path}")
-            self._rewards_df = None
+            raise ValueError(f"Rewards file doesn't have 'annotation.human.validity' column. Found columns: {self._rewards_df.columns}")
 
     def get_language(self, trajectory_id: int, key: str, base_index: int) -> list[str]:
         """Override get_language to handle reward feedback properly"""
