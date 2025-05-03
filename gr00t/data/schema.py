@@ -14,7 +14,8 @@
 # limitations under the License.
 
 from enum import Enum
-from typing import Optional
+from typing import Dict, Any, List, Optional, Union
+
 
 from numpydantic import NDArray
 from pydantic import BaseModel, Field, field_serializer
@@ -117,7 +118,9 @@ class LeRobotModalityMetadata(BaseModel):
         default=None,
         description="The metadata for the annotation modality. The keys are the new names of each annotation modality.",
     )
-
+    next: Dict[str, LeRobotStateActionMetadata] = Field(
+        default_factory=dict)
+    
     def get_key_meta(self, key: str) -> LeRobotModalityField:
         """Get the metadata for a key in the LeRobot modality metadata.
 
@@ -163,6 +166,13 @@ class LeRobotModalityMetadata(BaseModel):
                     f"Key: {key}, annotation key {subkey} not found in metadata, available annotation keys: {self.annotation.keys()}"
                 )
             return self.annotation[subkey]
+        elif modality == "next":  # Add this block
+            if subkey not in self.next:
+                raise ValueError(
+                    f"Key: {key}, next key {subkey} not found in metadata, available next keys: {self.next.keys()}"
+                )
+            return self.next[subkey]
+       
         else:
             raise ValueError(f"Key: {key}, unexpected modality: {modality}")
 
