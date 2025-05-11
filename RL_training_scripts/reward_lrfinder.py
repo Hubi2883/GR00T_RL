@@ -125,9 +125,10 @@ else:
     print("LoRA disabled (rank 0)")
 
 reward_head_cfg = RewardHeadConfig(
-    hidden_dim=512,
+    hidden_dim=2048,
     dropout=0.10,
     reward_dim=1,
+    reward_horizon=16,
     tune_projector=True,
 )
 reward_model_core = GR00TReward(base_model, reward_head_cfg)

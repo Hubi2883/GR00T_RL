@@ -55,7 +55,7 @@ lora_dropout = 0.10
 video_modality = ModalityConfig(delta_indices=[0], modality_keys=["video.ego_view"])
 state_modality = ModalityConfig(delta_indices=[0], modality_keys=["state.acceleration"])
 action_modality = ModalityConfig(delta_indices=[0], modality_keys=["action.wheel_commands"])
-reward_modality = ModalityConfig(delta_indices=[0], modality_keys=["next.reward"])
+reward_modality = ModalityConfig(delta_indices=list(range(16)), modality_keys=["next.reward"])
 language_modality = ModalityConfig(delta_indices=[0], modality_keys=["annotation.human.validity"])
 
 modality_configs = {
@@ -137,9 +137,10 @@ else:
 
 # ----- reward head ------
 reward_head_cfg = RewardHeadConfig(
-    hidden_dim=512,
+    hidden_dim=2048,
     dropout=0.10,
     reward_dim=1,
+    reward_horizon=16,
     tune_projector=True,
 )
 
@@ -184,26 +185,50 @@ reward_model.prepare_input = types.MethodType(fixed_prepare_input, reward_model)
 ###############################################################################
 
 class RewardModelWrapper(nn.Module):
-    def __init__(self, mdl: GR00TReward):
+    def __init__(self, mdl: GR00TReward, use_focal_loss=True, focal_gamma=2.0, focal_alpha=0.35):
         super().__init__()
         self.model = mdl
+        self.use_focal_loss = use_focal_loss
+        self.focal_gamma = focal_gamma
+        self.focal_alpha = focal_alpha
 
     def forward(self, inputs):
         outputs = self.model(inputs)
         # Case A: model already returns {"loss": ...}
         if isinstance(outputs, dict) and "loss" in outputs:
             return {"loss": outputs["loss"]}
-        # Case B: compute MSE loss between prediction and supplied target
+        
+        # Case B: compute loss between prediction and supplied target
         if isinstance(outputs, dict) and "reward_pred" in outputs and "target_reward" in inputs:
             pred, tgt = outputs["reward_pred"], inputs["target_reward"]
-            while len(tgt.shape) > len(pred.shape):
-                tgt = tgt.squeeze(-1)
+            
+            # Ensure shapes match correctly for horizon prediction
+            if len(pred.shape) == 3 and (len(tgt.shape) < 3 or tgt.shape[1] == 1):
+                # If prediction is [batch_size, 16, 1] and target is [batch_size] or [batch_size, 1]
+                if len(tgt.shape) == 1:
+                    tgt = tgt.unsqueeze(-1).unsqueeze(-1)  # [batch, 1, 1]
+                elif len(tgt.shape) == 2:
+                    tgt = tgt.unsqueeze(-1)  # [batch, 1, 1]
+                
+                # Expand target to all timesteps
+                tgt = tgt.expand(-1, pred.shape[1], -1)  # [batch, 16, 1]
+            
+            # Ensure same device and dtype
             tgt = tgt.to(device=pred.device, dtype=pred.dtype)
-            return {"loss": F.mse_loss(pred, tgt)}
+            
+            # Use focal loss if enabled
+            if self.use_focal_loss:
+                loss = focal_loss(pred, tgt, gamma=self.focal_gamma, alpha=self.focal_alpha)
+            else:
+                loss = F.mse_loss(pred, tgt)
+                
+            return {"loss": loss}
+            
         # Case C: tensor loss directly
         if isinstance(outputs, torch.Tensor):
             return {"loss": outputs}
-        # Fallback: zero‑loss (shouldn't happen)
+            
+        # Fallback: zero-loss (shouldn't happen)
         return {"loss": torch.tensor(0.0, device=next(self.parameters()).device, requires_grad=True)}
 
     # Allow Trainer.save_model to work
@@ -217,7 +242,12 @@ class RewardModelWrapper(nn.Module):
             if hasattr(self.model, "config"):
                 self.model.config.save_pretrained(out_dir)
 
-reward_model = RewardModelWrapper(reward_model).to(device)
+reward_model = RewardModelWrapper(
+    reward_model,
+    use_focal_loss=True,
+    focal_gamma=2.0,  # Focus on hard examples (higher = more focus)
+    focal_alpha=0.35, # Slightly higher weight for positive class
+).to(device)
 
 ###############################################################################
 # 5. TrainingArguments (identical fields to original script, expanded)
@@ -234,7 +264,10 @@ training_args = TrainingArguments(
 
     # ---- batching ----
     per_device_train_batch_size=4,
-    gradient_accumulation_steps=1,
+    gradient_accumulation_steps=2,
+
+    # ---- memory optimization ----
+    gradient_checkpointing=True,
 
     # ---- dataloader ----
     dataloader_num_workers=2,
@@ -287,3 +320,35 @@ os.makedirs(output_dir, exist_ok=True)
 final_path = os.path.join(output_dir, "final_reward_model.pt")
 torch.save(reward_model.state_dict(), final_path)
 print(f"Model saved to → {final_path}")
+
+# Add this function after imports section
+def focal_loss(predictions, targets, gamma=2.0, alpha=0.25):
+    """
+    Focal loss for binary classification.
+    
+    Args:
+        predictions: Raw logits from the model
+        targets: Binary target values (0 or 1)
+        gamma: Focusing parameter (higher = more focus on hard examples)
+        alpha: Class weight parameter (higher = more weight to positive class)
+        
+    Returns:
+        Calculated focal loss
+    """
+    # Apply sigmoid to get probabilities
+    p = torch.sigmoid(predictions)
+    
+    # Calculate binary cross entropy
+    ce_loss = F.binary_cross_entropy_with_logits(predictions, targets, reduction='none')
+    
+    # Apply the focal term
+    p_t = p * targets + (1 - p) * (1 - targets)
+    focal_term = (1 - p_t) ** gamma
+    
+    # Apply alpha weighting
+    alpha_t = alpha * targets + (1 - alpha) * (1 - targets)
+    
+    # Combine all terms
+    loss = alpha_t * focal_term * ce_loss
+    
+    return loss.mean()

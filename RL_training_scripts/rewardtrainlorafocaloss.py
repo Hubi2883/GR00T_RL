@@ -38,8 +38,15 @@ output_dir   = "/ceph/home/student.aau.dk/wb68dm/reward_model_checkpoints"
 base_model_path = "nvidia/GR00T-N1-2B"  # base 2‑B parameter checkpoint
 embodiment_tag  = "new_embodiment"
 
-# Initialize accelerator
-accelerator = Accelerator()
+# Initialize accelerator with simpler configuration
+accelerator = Accelerator(
+    mixed_precision="bf16",
+    gradient_accumulation_steps=2,
+    # Avoid distributed training features that might cause issues
+    deepspeed_plugin=None,
+    # Set log_with=None to disable extra loggers that might cause issues
+    log_with=None
+)
 print(f"Accelerator state: {accelerator.state}")
 
 # ---------- LoRA params ----------
@@ -171,6 +178,7 @@ reward_head_cfg = RewardHeadConfig(
     hidden_dim=2048,
     dropout=0.10,
     reward_dim=1,
+    reward_horizon=16,
     tune_projector=True,
 )
 
@@ -232,48 +240,22 @@ class RewardModelWrapper(nn.Module):
         if isinstance(outputs, dict) and "reward_pred" in outputs and "target_reward" in inputs:
             pred, tgt = outputs["reward_pred"], inputs["target_reward"]
             
-                    # Ensure tgt has same shape as pred
-        while len(tgt.shape) > len(pred.shape):
-            tgt = tgt.squeeze(-1)
-            
-        # Add this code to handle when pred has more dimensions than tgt
-        if len(pred.shape) > len(tgt.shape):
-            # Expand tgt to match pred's shape
-            tgt = tgt.view(-1, 1).expand(-1, pred.shape[1])
-            tgt = tgt.to(device=pred.device, dtype=pred.dtype)
-            
-            # Use focal loss if enabled
-            if self.use_focal_loss:
-                loss = focal_loss(
-                    pred, tgt, 
-                    gamma=self.focal_gamma, 
-                    alpha=self.focal_alpha
-                )
-            else:
-                # Fallback to MSE
-                loss = F.mse_loss(pred, tgt)
+            # Ensure shapes match correctly for horizon prediction
+            if len(pred.shape) == 3 and (len(tgt.shape) < 3 or tgt.shape[1] == 1):
+                # If prediction is [batch_size, 16, 1] and target is [batch_size] or [batch_size, 1]
+                if len(tgt.shape) == 1:
+                    tgt = tgt.unsqueeze(-1).unsqueeze(-1)  # [batch, 1, 1]
+                elif len(tgt.shape) == 2:
+                    tgt = tgt.unsqueeze(-1)  # [batch, 1, 1]
                 
-            return {"loss": loss}
-            
-        # Case C: tensor loss directly
-# Case B: compute loss between prediction and supplied target
-        if isinstance(outputs, dict) and "reward_pred" in outputs and "target_reward" in inputs:
-            pred, tgt = outputs["reward_pred"], inputs["target_reward"]
-            
-            # Reshape target or prediction to match dimensions
-            if pred.dim() > tgt.dim():
-                # If prediction is [batch_size, 16] and target is [batch_size]
-                # Expand target to match shape
-                tgt = tgt.unsqueeze(-1).expand(-1, pred.shape[-1])
+                # Expand target to all timesteps
+                tgt = tgt.expand(-1, pred.shape[1], -1)  # [batch, 16, 1]
             
             # Ensure same device and dtype
             tgt = tgt.to(device=pred.device, dtype=pred.dtype)
             
-            # Use focal loss if enabled
-            if self.use_focal_loss:
-                loss = focal_loss(pred, tgt, gamma=self.focal_gamma, alpha=self.focal_alpha)
-            else:
-                loss = F.mse_loss(pred, tgt)
+            # Use focal loss - always enabled for this script
+            loss = focal_loss(pred, tgt, gamma=self.focal_gamma, alpha=self.focal_alpha)
                 
             return {"loss": loss}
             
@@ -290,8 +272,40 @@ class RewardModelWrapper(nn.Module):
             torch.save(sd, os.path.join(out_dir, "pytorch_model.bin"))
             if hasattr(self.model, "config"):
                 self.model.config.save_pretrained(out_dir)
+    
+    # Forward gradient checkpointing methods to the wrapped model
+    def gradient_checkpointing_enable(self, gradient_checkpointing_kwargs=None):
+        """Enable gradient checkpointing for the wrapped model if supported."""
+        try:
+            if hasattr(self.model, "gradient_checkpointing_enable"):
+                return self.model.gradient_checkpointing_enable(gradient_checkpointing_kwargs)
+            else:
+                print("Warning: GR00TReward doesn't support gradient_checkpointing_enable. Continuing without it.")
+        except Exception as e:
+            print(f"Warning: Failed to enable gradient checkpointing: {e}. Continuing without it.")
+        return self
+    
+    def gradient_checkpointing_disable(self):
+        """Disable gradient checkpointing for the wrapped model if supported."""
+        try:
+            if hasattr(self.model, "gradient_checkpointing_disable"):
+                return self.model.gradient_checkpointing_disable()
+            else:
+                print("Warning: GR00TReward doesn't support gradient_checkpointing_disable. Continuing without it.")
+        except Exception as e:
+            print(f"Warning: Failed to disable gradient checkpointing: {e}. Continuing without it.")
+        return self
+    
+    # Forward other common attributes that might be accessed during training
+    def __getattr__(self, name):
+        """Forward attribute access to the wrapped model for attributes not in the wrapper."""
+        try:
+            return super().__getattr__(name)
+        except AttributeError:
+            if hasattr(self.model, name):
+                return getattr(self.model, name)
+            raise
 
-# Replace the reward_model instantiation with:
 reward_model = RewardModelWrapper(
     reward_model,
     use_focal_loss=True,
@@ -300,7 +314,7 @@ reward_model = RewardModelWrapper(
 ).to(accelerator.device)
 
 ###############################################################################
-# 5. TrainingArguments (identical fields to original script, expanded)
+# 5. TrainingArguments (modified for simpler training)
 ###############################################################################
 
 training_args = TrainingArguments(
@@ -313,8 +327,11 @@ training_args = TrainingArguments(
     tf32=True,
 
     # ---- batching ----
-    per_device_train_batch_size=8,
-    gradient_accumulation_steps=1,
+    per_device_train_batch_size=4,
+    gradient_accumulation_steps=2,
+
+    # ---- memory optimization ----
+    gradient_checkpointing=False,  # Completely disable gradient checkpointing
 
     # ---- dataloader ----
     dataloader_num_workers=2,
@@ -326,7 +343,7 @@ training_args = TrainingArguments(
     adam_beta1=0.95,
     adam_beta2=0.999,
     adam_epsilon=1e-8,
-    learning_rate=0.09,
+    learning_rate=0.00009,
     weight_decay=1e-5,
 
     # ---- schedule ----
@@ -334,19 +351,22 @@ training_args = TrainingArguments(
     lr_scheduler_type="cosine",
 
     # ---- logging / ckpt ----
-    logging_steps=100,
-    max_steps=10000,
+    logging_steps=50,
+    max_steps=500,
     save_strategy="steps",
-    save_steps=500,
+    save_steps=250,
     save_total_limit=3,
 
     # ---- misc ----
     evaluation_strategy="no",
     seed=42,
     do_eval=False,
+    # Disable distributed training features that might cause problems
     ddp_find_unused_parameters=False,
     ddp_bucket_cap_mb=100,
     torch_compile_mode=None,
+    # Disable report_to to avoid extra loggers that might cause issues
+    report_to=[],
 )
 
 ###############################################################################

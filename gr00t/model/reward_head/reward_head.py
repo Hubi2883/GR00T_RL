@@ -15,6 +15,7 @@ class RewardHeadConfig(PretrainedConfig):
     hidden_dim: int = field(default=512, metadata={"help": "Hidden dimension size"})
     dropout: float = field(default=0.1, metadata={"help": "Dropout probability"})
     reward_dim: int = field(default=1, metadata={"help": "Reward output dimension"})
+    reward_horizon: int = field(default=16, metadata={"help": "Number of reward predictions in sequence"})
     tune_projector: bool = field(default=True, metadata={"help": "Whether to tune the projector"})
     
 class RewardHead(nn.Module):
@@ -28,19 +29,23 @@ class RewardHead(nn.Module):
         super().__init__()
         self.config = config
         self._compute_dtype = torch.float32  # Use different attribute name
+        self.reward_horizon = config.reward_horizon
     
         backbone_dim = 1536  # Standard GR00T backbone 
         
-        
-        # Simple projector from backbone features to reward
-        self.reward_projector = nn.Sequential(
+        # Sequence processing layers for all features (not just first token)
+        self.sequence_projector = nn.Sequential(
             nn.Linear(backbone_dim, config.hidden_dim),
             nn.GELU(),
-            nn.Dropout(config.dropout),
+            nn.Dropout(config.dropout)
+        )
+        
+        # Final reward projector to generate reward_horizon predictions
+        self.reward_projector = nn.Sequential(
             nn.Linear(config.hidden_dim, config.hidden_dim // 2),
             nn.GELU(),
             nn.Dropout(config.dropout),
-            nn.Linear(config.hidden_dim // 2, config.reward_dim)
+            nn.Linear(config.hidden_dim // 2, self.reward_horizon * config.reward_dim)
         )
         
         # Set trainable parameters
@@ -57,14 +62,21 @@ class RewardHead(nn.Module):
         Returns:
             BatchFeature containing reward predictions and optional loss
         """
-        features = backbone_outputs[BACKBONE_FEATURE_KEY]
+        features = backbone_outputs[BACKBONE_FEATURE_KEY]  # [batch_size, seq_len, hidden_dim]
         
-        # Extract features from backbone (first token)
-        if len(features.shape) == 3:
-            features = features[:, 0]  # Use first token features
-            
-        # Calculate reward prediction
-        reward_pred = self.reward_projector(features)
+        # Process the full sequence (or use global features if needed)
+        # Option 1: Use mean pooling across sequence
+        batch_size = features.shape[0]
+        pooled_features = features.mean(dim=1)  # [batch_size, hidden_dim]
+        
+        # Project features to intermediate space
+        hidden_features = self.sequence_projector(pooled_features)  # [batch_size, hidden_dim]
+        
+        # Generate reward predictions for the horizon
+        reward_flat = self.reward_projector(hidden_features)  # [batch_size, horizon*reward_dim]
+        
+        # Reshape to [batch_size, horizon, reward_dim]
+        reward_pred = reward_flat.view(batch_size, self.reward_horizon, self.config.reward_dim)
         
         outputs = {REWARD_KEY: reward_pred}
         
@@ -74,9 +86,21 @@ class RewardHead(nn.Module):
             
             # Ensure shapes match
             if reward_pred.shape != target_reward.shape:
-                #print(f"Shape mismatch: reward_pred {reward_pred.shape} vs target {target_reward.shape}")
-                # Reshape target to match prediction shape
-                target_reward = target_reward.view(reward_pred.shape)
+                # Handle cases where target is [batch_size] but pred is [batch_size, horizon, reward_dim]
+                if len(target_reward.shape) == 1:
+                    # Expand target to match prediction horizon
+                    target_reward = target_reward.unsqueeze(-1).unsqueeze(-1)  # [batch, 1, 1]
+                    target_reward = target_reward.expand(-1, self.reward_horizon, self.config.reward_dim)
+                elif len(target_reward.shape) == 2:
+                    # Expand target to match prediction horizon
+                    target_reward = target_reward.unsqueeze(-1)  # [batch, 1, 1]
+                    target_reward = target_reward.expand(-1, self.reward_horizon, self.config.reward_dim)
+                elif len(target_reward.shape) == 3 and target_reward.shape[1] == 1:
+                    # Already 3D but first dimension is 1, expand to match horizon
+                    target_reward = target_reward.expand(-1, self.reward_horizon, -1)
+                
+            # Convert to target dtype
+            target_reward = target_reward.to(device=reward_pred.device, dtype=reward_pred.dtype)
                 
             loss = F.mse_loss(reward_pred, target_reward)
             outputs[LOSS_KEY] = loss
@@ -95,16 +119,8 @@ class RewardHead(nn.Module):
         Returns:
             BatchFeature containing reward predictions
         """
-        features = backbone_outputs[BACKBONE_FEATURE_KEY]
-        
-        # Extract features from backbone (first token)
-        if len(features.shape) == 3:
-            features = features[:, 0]  # Use first token features
-            
-        # Calculate reward prediction
-        reward_pred = self.reward_projector(features)
-        
-        return BatchFeature({REWARD_KEY: reward_pred})
+        # Use the same forward implementation for consistency
+        return self.forward(backbone_outputs, inputs)
     
     def prepare_input(self, inputs):
         """
