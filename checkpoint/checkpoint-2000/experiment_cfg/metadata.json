@@ -1,0 +1,89 @@
+{
+    "new_embodiment": {
+        "statistics": {
+            "state": {
+                "acceleration": {
+                    "max": [
+                        7.957746982574463
+                    ],
+                    "min": [
+                        -5.432826042175293
+                    ],
+                    "mean": [
+                        2.830136775970459
+                    ],
+                    "std": [
+                        1.9212615489959717
+                    ],
+                    "q01": [
+                        -1.0836213588714596
+                    ],
+                    "q99": [
+                        7.30845260620117
+                    ]
+                }
+            },
+            "action": {
+                "wheel_commands": {
+                    "max": [
+                        7.957746982574463,
+                        7.957746982574463
+                    ],
+                    "min": [
+                        -5.432826042175293,
+                        -6.113986968994141
+                    ],
+                    "mean": [
+                        2.830136775970459,
+                        2.6761891841888428
+                    ],
+                    "std": [
+                        1.9212615489959717,
+                        2.0631136894226074
+                    ],
+                    "q01": [
+                        -1.0836213588714596,
+                        -1.7173933863639828
+                    ],
+                    "q99": [
+                        7.30845260620117,
+                        7.3048387050628625
+                    ]
+                }
+            }
+        },
+        "modalities": {
+            "video": {
+                "ego_view": {
+                    "resolution": [
+                        522,
+                        294
+                    ],
+                    "channels": 3,
+                    "fps": 10.0
+                }
+            },
+            "state": {
+                "acceleration": {
+                    "absolute": true,
+                    "rotation_type": null,
+                    "shape": [
+                        1
+                    ],
+                    "continuous": true
+                }
+            },
+            "action": {
+                "wheel_commands": {
+                    "absolute": true,
+                    "rotation_type": null,
+                    "shape": [
+                        2
+                    ],
+                    "continuous": true
+                }
+            }
+        },
+        "embodiment_tag": "new_embodiment"
+    }
+}

@@ -51,12 +51,12 @@ print(f"Accelerator state: {accelerator.state}")
 
 # ---------- LoRA params ----------
 lora_rank    = 16   # 0 disables LoRA
-lora_alpha   = 32
+lora_alpha   = 8
 lora_dropout = 0.10
 
 
 # Add this function after imports section
-def focal_loss(predictions, targets, gamma=2.0, alpha=0.25):
+def focal_loss(predictions, targets, gamma=2.0, alpha=0.1):
     """
     Focal loss for binary classification.
     
@@ -343,7 +343,7 @@ training_args = TrainingArguments(
     adam_beta1=0.95,
     adam_beta2=0.999,
     adam_epsilon=1e-8,
-    learning_rate=0.00009,
+    learning_rate=0.000009,
     weight_decay=1e-5,
 
     # ---- schedule ----
@@ -352,9 +352,9 @@ training_args = TrainingArguments(
 
     # ---- logging / ckpt ----
     logging_steps=50,
-    max_steps=500,
+    max_steps=2500,
     save_strategy="steps",
-    save_steps=250,
+    save_steps=500,
     save_total_limit=3,
 
     # ---- misc ----

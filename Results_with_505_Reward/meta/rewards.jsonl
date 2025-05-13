@@ -1,0 +1,11 @@
+{"annotation.human.score": -5, "feedback": "Extremely far from target, completely wrong direction"}
+{"annotation.human.score": -4, "feedback": "Very far off course with major navigation errors"}
+{"annotation.human.score": -3, "feedback": "Significant deviation from optimal path"}
+{"annotation.human.score": -2, "feedback": "Too distant from target, needs substantial correction"}
+{"annotation.human.score": -1, "feedback": "Slightly off target, minor course adjustment needed"}
+{"annotation.human.score": 0, "feedback": "Moderate distance - neither close nor far"}
+{"annotation.human.score": 1, "feedback": "Approaching target but still at distance"}
+{"annotation.human.score": 2, "feedback": "Getting closer, acceptable distance range"}
+{"annotation.human.score": 3, "feedback": "Good proximity to target location"}
+{"annotation.human.score": 4, "feedback": "Very close to optimal position"}
+{"annotation.human.score": 5, "feedback": "Perfect distance, exactly at target position"}
