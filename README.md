@@ -1,5 +1,8 @@
-On-going project modifing GR00T_RL aiming to improve efficiency of finetuning by incorporating reinforcement learning feedback human  (RLHF).
+Project modifing GR00T_RL aiming to improve efficiency of finetuning by incorporating reinforcement learning feedback human  (RLHF).
 
+This work proposes a three-stage reinforcement learning from human feed-back (RLHF) approach for robot navigation and concentrates on the second stage, in which a reward function must be inferred when both states and actions are raw sensor observations. The training is split into the fine-tuning of the base model, a train- ing of a reward model and the use of the reward model for optimization of the original policy model. This approach solves the central difficulty that due to a high dimensional and uninterpretable observation space, explicit rewards are unavailable. The main problem has been defined as
+a noise existing in reward-unrelated embedding differences. Introduced is a theoretical analysis that identifies
+a methodological parameter that can improve convergence challenged by this observation-level noise. Is shown that the RLHF can be applied to create a reward model for complex and not-understood environments.
 
 
 
