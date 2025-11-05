@@ -10,7 +10,19 @@ a methodological parameter that can improve convergence challenged by this obser
 
 
 
+Key Features:
 
+Foundation Model: Leverages the pre-trained GR00T N1 (2B parameters) vision-language model as a backbone for robot policy. This model can interpret visual scenes and language instructions, providing a strong prior for general robotic tasks.
+
+Dual-System Architecture: GR00T’s policy uses a frozen vision-language encoder for perception and instruction understanding, coupled with a diffusion-based action generator head for control outputs. This “System 2 & System 1” design lets the robot reason in high-level terms and execute fine motor actions.
+
+Reward Modeling: Adds a GR00TReward network on top of the backbone to predict scalar rewards from trajectories. This reward model is trained on human feedback data (e.g. human ratings of success) and provides a learned reward function for RL.
+
+RLHF Fine-Tuning: Integrates a reinforcement learning loop (e.g. proximal policy optimization) where the reward model’s output guides the policy updates. By optimizing the policy to maximize predicted human reward, the robot learns behaviors that humans prefer, beyond what is in the demo data.
+
+Parameter-Efficient Tuning: Supports LoRA (Low-Rank Adapters) and other PEFT techniques for fine-tuning both the reward model and policy. This allows efficient training on limited GPU memory by only updating smaller adapter weights instead of the full 2B model.
+
+Modular Design: Maintains GR00T’s flexible embodiment tagging and modality configs – the same code can be adapted to new robot hardware or sensor suites with minimal changes. Human feedback can be incorporated for any new task or embodiment by providing the appropriate reward data.
 
 
 
